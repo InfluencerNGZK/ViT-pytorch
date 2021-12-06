@@ -10,6 +10,7 @@ import numpy as np
 from datetime import timedelta
 
 import torch
+import csv
 import torch.distributed as dist
 
 from tqdm import tqdm
@@ -190,10 +191,22 @@ def train(args, model):
                               bar_format="{l_bar}{r_bar}",
                               dynamic_ncols=True,
                               disable=args.local_rank not in [-1, 0])
+        memory_allocated_list, memory_reserved_list, memory_inactive_list = [], [], []
+        memory_allocated_list.append(torch.cuda.memory_stats()["allocated_bytes.all.current"]/1024/1024)
+        memory_reserved_list.append(torch.cuda.memory_stats()["reserved_bytes.all.current"]/1024/1024)
+        memory_inactive_list.append(torch.cuda.memory_stats()["inactive_split_bytes.all.current"]/1024/1024)
         for step, batch in enumerate(epoch_iterator):
             batch = tuple(t.to(args.device) for t in batch)
+            if step % 10 == 0:
+                memory_allocated_list.append(torch.cuda.memory_stats()["allocated_bytes.all.current"]/1024/1024)
+                memory_reserved_list.append(torch.cuda.memory_stats()["reserved_bytes.all.current"]/1024/1024)
+                memory_inactive_list.append(torch.cuda.memory_stats()["inactive_split_bytes.all.current"]/1024/1024)
             x, y = batch
             loss = model(x, y)
+            if step % 10 == 0:
+                memory_allocated_list.append(torch.cuda.memory_stats()["allocated_bytes.all.current"]/1024/1024)
+                memory_reserved_list.append(torch.cuda.memory_stats()["reserved_bytes.all.current"]/1024/1024)
+                memory_inactive_list.append(torch.cuda.memory_stats()["inactive_split_bytes.all.current"]/1024/1024)
 
             if args.gradient_accumulation_steps > 1:
                 loss = loss / args.gradient_accumulation_steps
@@ -203,6 +216,10 @@ def train(args, model):
             else:
                 loss.backward()
 
+            if step % 10 == 0:
+                memory_allocated_list.append(torch.cuda.memory_stats()["allocated_bytes.all.current"]/1024/1024)
+                memory_reserved_list.append(torch.cuda.memory_stats()["reserved_bytes.all.current"]/1024/1024)
+                memory_inactive_list.append(torch.cuda.memory_stats()["inactive_split_bytes.all.current"]/1024/1024)
             if (step + 1) % args.gradient_accumulation_steps == 0:
                 losses.update(loss.item()*args.gradient_accumulation_steps)
                 if args.fp16:
@@ -229,6 +246,11 @@ def train(args, model):
 
                 if global_step % t_total == 0:
                     break
+        with open('test.csv', 'w') as f:
+            write = csv.writer(f)
+            write.writerow(memory_allocated_list)
+            write.writerow(memory_reserved_list)
+            write.writerow(memory_inactive_list)
         losses.reset()
         if global_step % t_total == 0:
             break
@@ -257,7 +279,7 @@ def main():
 
     parser.add_argument("--img_size", default=224, type=int,
                         help="Resolution size")
-    parser.add_argument("--train_batch_size", default=512, type=int,
+    parser.add_argument("--train_batch_size", default=64, type=int,
                         help="Total batch size for training.")
     parser.add_argument("--eval_batch_size", default=64, type=int,
                         help="Total batch size for eval.")
@@ -269,7 +291,7 @@ def main():
                         help="The initial learning rate for SGD.")
     parser.add_argument("--weight_decay", default=0, type=float,
                         help="Weight deay if we apply some.")
-    parser.add_argument("--num_steps", default=10000, type=int,
+    parser.add_argument("--num_steps", default=300, type=int,
                         help="Total number of training epochs to perform.")
     parser.add_argument("--decay_type", choices=["cosine", "linear"], default="cosine",
                         help="How to decay the learning rate.")
